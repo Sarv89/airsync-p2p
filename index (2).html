@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AirSync P2P - Live File & Folder Share</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#ecfeff',
+              100: '#cff0ff',
+              400: '#38bdf8',
+              500: '#06b6d4',
+              600: '#0891b2',
+              900: '#164e63',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- PeerJS for WebRTC P2P Connections -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+
+  <!-- JSZip for Bundling Folder Downloads -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <!-- Font Awesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+    
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: #0b0f19;
+      color: #f1f5f9;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+
+    .glass-card {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .dropzone-active {
+      border-color: #38bdf8 !important;
+      background-color: rgba(56, 189, 248, 0.08) !important;
+      transform: scale(1.005);
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 15px rgba(6, 182, 212, 0.2); }
+      50% { box-shadow: 0 0 28px rgba(6, 182, 212, 0.5); }
+    }
+
+    .glow-effect {
+      animation: pulse-glow 3s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between selection:bg-cyan-500 selection:text-slate-900">
+
+  <!-- Top Navigation Header -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-sky-400 flex items-center justify-center text-slate-950 font-black text-xl shadow-lg shadow-cyan-500/20">
+          <i class="fa-solid font-bold fa-share-nodes"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg leading-tight tracking-tight text-white flex items-center gap-2">
+            AirSync <span class="text-xs px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono">P2P LIVE</span>
+          </h1>
+          <p class="text-xs text-slate-400">Zero-Server Direct Browser Streaming</p>
+        </div>
+      </div>
+
+      <!-- Mode & Connection Status -->
+      <div class="flex items-center gap-3">
+        <div id="roleBadge" class="hidden sm:flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-300">
+          <span class="w-2 h-2 rounded-full bg-slate-500" id="roleDot"></span>
+          <span id="roleText">Initializing...</span>
+        </div>
+
+        <div id="connectionPill" class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-800/90 border border-slate-700/80 text-slate-300">
+          <i class="fa-solid fa-circle-notch fa-spin text-cyan-400" id="statusSpinner"></i>
+          <span id="statusText">Connecting to Network...</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
+
+    <!-- Warning Banner for Local file:// or localhost -->
+    <div id="networkWarningBanner" class="hidden glass-card rounded-2xl p-4 border border-amber-500/40 bg-amber-950/20 flex items-start gap-3">
+      <i class="fa-solid fa-triangle-exclamation text-amber-400 text-lg mt-0.5"></i>
+      <div class="text-xs space-y-1">
+        <h4 class="font-bold text-amber-300" id="warningTitle">Local Host Environment Detected</h4>
+        <p class="text-slate-300" id="warningDesc">You are running this application locally (<code class="text-amber-300 font-mono" id="protocolLabel">file://</code>). Links copied to other devices will not open unless hosted on an HTTP server (e.g., GitHub Pages, Netlify, or local network IP).</p>
+      </div>
+    </div>
+
+    <!-- Share Room Banner / Connection Bar -->
+    <div class="glass-card rounded-2xl p-5 shadow-xl relative overflow-hidden">
+      <div class="absolute -right-10 -bottom-10 w-40 h-40 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+      
+      <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+        <div class="space-y-1">
+          <div class="flex items-center gap-2">
+            <span id="sessionTag" class="text-xs font-bold uppercase tracking-wider text-cyan-400">HOST SESSION</span>
+            <span id="peerCountBadge" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">0 Peers Connected</span>
+          </div>
+          <h2 class="text-xl font-bold text-white flex items-center gap-2">
+            <i class="fa-solid fa-network-wired text-cyan-400"></i>
+            <span id="shareBannerTitle">Live Sharing Network Link</span>
+          </h2>
+          <p class="text-sm text-slate-400" id="shareBannerDesc">Anyone with this live WebRTC link can stream and view files directly from your browser memory.</p>
+        </div>
+
+        <!-- Share Actions -->
+        <div class="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+          <div class="flex-1 lg:w-80 relative">
+            <input type="text" id="shareUrlInput" readonly class="w-full bg-slate-950 border border-slate-700 text-cyan-300 text-xs font-mono rounded-xl pl-3 pr-10 py-2.5 focus:outline-none focus:border-cyan-500 select-all" value="Generating connection link...">
+            <button id="copyBtn" onclick="copyShareLink()" class="absolute right-1 top-1 bottom-1 px-3 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-lg text-xs transition flex items-center gap-1.5 shadow">
+              <i class="fa-regular fa-copy"></i>
+              <span>Copy</span>
+            </button>
+          </div>
+          
+          <button onclick="openQrModal()" class="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-2">
+            <i class="fa-solid fa-qrcode text-cyan-400"></i>
+            <span>QR Code</span>
+          </button>
+
+          <button id="newRoomBtn" onclick="createNewRoom()" class="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-2">
+            <i class="fa-solid fa-arrows-rotate text-amber-400"></i>
+            <span>New Session</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Host Dropzone Section -->
+    <div id="dropzoneContainer" class="glass-card rounded-2xl p-8 border-2 border-dashed border-slate-700 text-center transition-all duration-200 cursor-pointer relative">
+      <input type="file" id="fileInput" multiple class="hidden" onchange="handleFileSelect(event)">
+      <input type="file" id="folderInput" webkitdirectory directory multiple class="hidden" onchange="handleFolderSelect(event)">
+      
+      <div class="flex flex-col items-center justify-center space-y-4">
+        <div class="w-16 h-16 rounded-2xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-cyan-400 text-2xl shadow-inner transition">
+          <i class="fa-solid fa-cloud-arrow-up"></i>
+        </div>
+
+        <div class="space-y-1">
+          <h3 class="text-lg font-bold text-white">Drag & Drop Files or Folders Here</h3>
+          <p class="text-xs text-slate-400 max-w-md mx-auto">
+            Full directory hierarchies are preserved recursively. Files stay stored exclusively in browser memory and stream live upon peer request.
+          </p>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-center gap-3 pt-2">
+          <button onclick="document.getElementById('fileInput').click()" class="px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-xl text-xs transition shadow-lg shadow-cyan-500/20 flex items-center gap-2">
+            <i class="fa-solid fa-file-circle-plus"></i>
+            <span>Select Files</span>
+          </button>
+
+          <button onclick="document.getElementById('folderInput').click()" class="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold rounded-xl text-xs transition flex items-center gap-2">
+            <i class="fa-solid fa-folder-plus text-amber-400"></i>
+            <span>Select Entire Folder</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Transfer Progress Bar -->
+    <div id="transferProgressBar" class="hidden glass-card rounded-xl p-4 border border-cyan-500/30 bg-cyan-950/20 space-y-2">
+      <div class="flex items-center justify-between text-xs font-semibold">
+        <div class="flex items-center gap-2 text-cyan-300">
+          <i class="fa-solid fa-satellite-dish fa-spin"></i>
+          <span id="transferFileName">Transferring file...</span>
+        </div>
+        <div class="text-slate-400 font-mono">
+          <span id="transferSpeed">0 MB/s</span> | <span id="transferPercent">0%</span>
+        </div>
+      </div>
+      <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+        <div id="progressBarFill" class="h-full bg-gradient-to-r from-cyan-500 to-sky-400 transition-all duration-150 w-0"></div>
+      </div>
+    </div>
+
+    <!-- File Manager Section -->
+    <div class="glass-card rounded-2xl p-6 space-y-4">
+      
+      <!-- Toolbar Header -->
+      <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <h3 class="text-base font-bold text-white flex items-center gap-2">
+            <i class="fa-solid fa-folder-tree text-amber-400"></i>
+            <span>Shared Manifest</span>
+          </h3>
+          <span id="fileCountBadge" class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-cyan-400 border border-slate-700 font-mono">0 Items</span>
+          <span id="totalSizeBadge" class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">0 B</span>
+        </div>
+
+        <!-- Toolbar Actions -->
+        <div class="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          <!-- Search Box -->
+          <div class="relative flex-1 md:w-60">
+            <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-xs text-slate-500"></i>
+            <input type="text" id="searchInput" oninput="filterFiles()" placeholder="Search files or paths..." class="w-full bg-slate-900 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500">
+          </div>
+
+          <!-- Download All Button -->
+          <button id="downloadZipBtn" onclick="downloadAllAsZip()" class="px-4 py-2 bg-gradient-to-r from-cyan-600 to-sky-600 hover:from-cyan-500 hover:to-sky-500 text-white font-bold rounded-xl text-xs transition shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+            <i class="fa-solid fa-file-zipper"></i>
+            <span>Download All (.ZIP)</span>
+          </button>
+
+          <!-- Clear List (Host Only) -->
+          <button id="clearBtn" onclick="clearFileList()" class="px-3 py-2 bg-slate-800 hover:bg-rose-950/40 hover:text-rose-400 text-slate-400 border border-slate-700 rounded-xl text-xs transition flex items-center gap-1.5">
+            <i class="fa-solid fa-trash-can"></i>
+            <span class="hidden sm:inline">Clear</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Category Filter Tabs -->
+      <div class="flex items-center gap-2 overflow-x-auto pb-1 text-xs no-scrollbar border-b border-slate-800/80">
+        <button onclick="setCategoryFilter('all', event)" class="cat-btn active px-3 py-1.5 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 font-semibold whitespace-nowrap transition">All Files</button>
+        <button onclick="setCategoryFilter('image', event)" class="cat-btn px-3 py-1.5 rounded-lg bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-800 font-semibold whitespace-nowrap transition">Images</button>
+        <button onclick="setCategoryFilter('video', event)" class="cat-btn px-3 py-1.5 rounded-lg bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-800 font-semibold whitespace-nowrap transition">Videos</button>
+        <button onclick="setCategoryFilter('audio', event)" class="cat-btn px-3 py-1.5 rounded-lg bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-800 font-semibold whitespace-nowrap transition">Audio</button>
+        <button onclick="setCategoryFilter('document', event)" class="cat-btn px-3 py-1.5 rounded-lg bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-800 font-semibold whitespace-nowrap transition">Documents</button>
+        <button onclick="setCategoryFilter('code', event)" class="cat-btn px-3 py-1.5 rounded-lg bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-800 font-semibold whitespace-nowrap transition">Code & Data</button>
+        <button onclick="setCategoryFilter('archive', event)" class="cat-btn px-3 py-1.5 rounded-lg bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-800 font-semibold whitespace-nowrap transition">Archives</button>
+      </div>
+
+      <!-- File Table Container -->
+      <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50">
+        <table class="w-full text-left text-xs text-slate-300">
+          <thead class="bg-slate-900/90 uppercase text-[10px] tracking-wider text-slate-400 font-bold border-b border-slate-800">
+            <tr>
+              <th class="py-3 px-4">Type</th>
+              <th class="py-3 px-4">Relative Path / File Name</th>
+              <th class="py-3 px-4">Size</th>
+              <th class="py-3 px-4">Category</th>
+              <th class="py-3 px-4 text-center">Status</th>
+              <th class="py-3 px-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="fileTableBody" class="divide-y divide-slate-800/60 font-medium">
+            <!-- Dynamic rows inserted here -->
+          </tbody>
+        </table>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="py-12 text-center space-y-3">
+          <div class="w-12 h-12 rounded-full bg-slate-900 border border-slate-800 text-slate-600 flex items-center justify-center mx-auto text-lg">
+            <i class="fa-solid fa-folder-open"></i>
+          </div>
+          <p class="text-sm text-slate-400 font-semibold">No files added to the network manifest yet</p>
+          <p class="text-xs text-slate-500 max-w-xs mx-auto">Select files/folders above or wait for the host to broadcast shared contents.</p>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-800 bg-slate-900/60 py-6 text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span>Direct WebRTC P2P DataChannel Connection</span>
+      </div>
+      <div>Files stream directly between devices. No cloud storage, no server logs.</div>
+    </div>
+  </footer>
+
+  <!-- Live Preview Modal -->
+  <div id="previewModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="glass-card rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col border border-slate-700 shadow-2xl overflow-hidden">
+      <!-- Modal Header -->
+      <div class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
+        <div class="flex items-center gap-3 overflow-hidden">
+          <div id="previewIcon" class="w-8 h-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center text-sm font-bold flex-shrink-0">
+            <i class="fa-solid fa-file"></i>
+          </div>
+          <div class="overflow-hidden">
+            <h4 id="previewTitle" class="text-sm font-bold text-white truncate">filename.ext</h4>
+            <p id="previewSub" class="text-xs text-slate-400 truncate">Path: / - Size: 0 MB</p>
+          </div>
+        </div>
+        <button onclick="closePreviewModal()" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <!-- Modal Content Body -->
+      <div class="p-6 overflow-y-auto flex-1 flex items-center justify-center bg-slate-950/50 min-h-[300px]" id="previewBody">
+        <!-- Dynamic media view -->
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="p-4 border-t border-slate-800 bg-slate-900/80 flex items-center justify-between">
+        <span class="text-xs text-slate-400" id="previewStatus">Rendered in Browser Memory</span>
+        <div class="flex items-center gap-2">
+          <button id="previewCopyBtn" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold rounded-xl text-xs transition flex items-center gap-1.5">
+            <i class="fa-regular fa-copy"></i>
+            <span>Copy Content</span>
+          </button>
+          <a id="previewDownloadBtn" download class="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-xl text-xs transition flex items-center gap-2">
+            <i class="fa-solid fa-download"></i>
+            <span>Save to System</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- QR Code Modal -->
+  <div id="qrModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="glass-card rounded-2xl max-w-sm w-full p-6 text-center space-y-4 border border-slate-700 shadow-2xl">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h3 class="font-bold text-white text-base flex items-center gap-2">
+          <i class="fa-solid fa-qrcode text-cyan-400"></i>
+          <span>Scan to Connect</span>
+        </h3>
+        <button onclick="closeQrModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      
+      <div class="bg-white p-4 rounded-xl inline-block shadow-inner mx-auto">
+        <img id="qrImage" src="" alt="Session QR Code" class="w-48 h-48 mx-auto">
+      </div>
+
+      <p class="text-xs text-slate-400">Scan with mobile camera to open this peer room and receive streamed files.</p>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  <script>
+    const CHUNK_SIZE = 32768; // 32 KB chunk size for WebRTC DataChannel throughput
+
+    // Application State
+    let peer = null;
+    let peerId = null;
+    let isHost = true;
+    let hostConnection = null; // Connection to host if receiver
+    let activeConnections = []; // Active peer connections if host
+    let connectionTimeoutTimer = null;
+    
+    // File Storage Maps
+    const localFiles = new Map();
+    let currentFilterCategory = 'all';
+    let searchQuery = '';
+
+    const PEER_CONFIG = {
+      debug: 1,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' }
+        ]
+      }
+    };
+
+    window.addEventListener('load', () => {
+      checkEnvironment();
+      setupDragAndDrop();
+      initPeerJS();
+    });
+
+    // Listen for hash changes in the URL (e.g., pasting or clicking new share link)
+    window.addEventListener('hashchange', () => {
+      if (peer) {
+        try { peer.destroy(); } catch (e) {}
+      }
+      initPeerJS();
+    });
+
+    function checkEnvironment() {
+      const isFileProtocol = window.location.protocol === 'file:';
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      const warningBanner = document.getElementById('networkWarningBanner');
+
+      if (isFileProtocol) {
+        warningBanner.classList.remove('hidden');
+        document.getElementById('protocolLabel').textContent = 'file://';
+        document.getElementById('warningDesc').innerHTML = 'You opened this file directly from local disk (<code>file://</code>). Sharing links to another device will fail because local file URLs are private to your machine. <strong>Host this on a web server (e.g. GitHub Pages/Vercel) or open via Local IP server to share across devices.</strong>';
+      } else if (isLocalhost) {
+        warningBanner.classList.remove('hidden');
+        document.getElementById('protocolLabel').textContent = window.location.hostname;
+        document.getElementById('warningDesc').innerHTML = 'You are hosting on <code>localhost</code>. Sharing links or scanning QR codes on mobile devices will fail because <code>localhost</code> points to the receiving device itself. Use your machine\'s Local IP address (e.g., <code>192.168.x.x</code>) to share with nearby devices.';
+      }
+    }
+
+    function initPeerJS() {
+      const hash = window.location.hash.replace('#', '').trim();
+      
+      if (hash) {
+        // Receiver Mode
+        isHost = false;
+        updateRoleUI('Receiver Mode', 'bg-amber-500');
+        document.getElementById('sessionTag').textContent = 'CLIENT RECEIVER';
+        document.getElementById('shareBannerTitle').textContent = 'Connected to Remote Host';
+        document.getElementById('shareBannerDesc').textContent = 'You are connected directly to the file host. Browse and stream files below.';
+        document.getElementById('dropzoneContainer').classList.add('hidden');
+        document.getElementById('clearBtn').classList.add('hidden');
+
+        const rxId = 'airsync-rx-' + Math.random().toString(36).substring(2, 9);
+        peer = new Peer(rxId, PEER_CONFIG);
+
+        peer.on('open', (id) => {
+          peerId = id;
+          updateStatus('Connecting to Host...', true);
+          connectToHost(hash);
+        });
+
+      } else {
+        // Host Mode
+        isHost = true;
+        updateRoleUI('Host Mode (Sharing)', 'bg-emerald-500');
+        document.getElementById('sessionTag').textContent = 'HOST SESSION';
+        document.getElementById('shareBannerTitle').textContent = 'Live Sharing Network Link';
+        document.getElementById('shareBannerDesc').textContent = 'Anyone with this live WebRTC link can stream and view files directly from your browser memory.';
+        document.getElementById('dropzoneContainer').classList.remove('hidden');
+        document.getElementById('clearBtn').classList.remove('hidden');
+
+        const hostId = 'airsync-host-' + Math.random().toString(36).substring(2, 11);
+        peer = new Peer(hostId, PEER_CONFIG);
+
+        peer.on('open', (id) => {
+          peerId = id;
+          const roomUrl = `${window.location.origin}${window.location.pathname}#${id}`;
+          document.getElementById('shareUrlInput').value = roomUrl;
+          updateStatus('Ready for Peer Connections', false);
+        });
+
+        peer.on('connection', (conn) => {
+          handleIncomingConnection(conn);
+        });
+      }
+
+      peer.on('disconnected', () => {
+        updateStatus('Reconnecting to Network...', true);
+        try {
+          peer.reconnect();
+        } catch (e) {
+          console.warn('Peer reconnect attempt:', e);
+        }
+      });
+
+      peer.on('error', (err) => {
+        console.warn('PeerJS Error caught gracefully:', err.type, err);
+        if (err.type === 'peer-unavailable') {
+          showToast('Target host session unavailable or offline.', 'error');
+          updateStatus('Host Offline / Session Expired', false);
+        } else if (err.type === 'unavailable-id') {
+          setTimeout(() => initPeerJS(), 1000);
+        } else {
+          showToast(`Network Notice: ${err.type || 'Connection reset'}`, 'warning');
+          updateStatus('Ready (Standby)', false);
+        }
+      });
+    }
+
+    function handleIncomingConnection(conn) {
+      activeConnections.push(conn);
+      updatePeerCountUI();
+      showToast('New peer connected!', 'info');
+
+      conn.on('open', () => {
+        broadcastManifest(conn);
+      });
+
+      conn.on('data', (data) => {
+        handleIncomingMessage(data, conn);
+      });
+
+      conn.on('close', () => {
+        activeConnections = activeConnections.filter(c => c !== conn);
+        updatePeerCountUI();
+        showToast('Peer disconnected', 'warning');
+      });
+    }
+
+    function connectToHost(hostId) {
+      if (!peer || peer.destroyed) return;
+
+      clearTimeout(connectionTimeoutTimer);
+
+      hostConnection = peer.connect(hostId, {
+        reliable: true,
+        serialization: 'binary'
+      });
+
+      // 10-second connection timeout warning
+      connectionTimeoutTimer = setTimeout(() => {
+        if (hostConnection && !hostConnection.open) {
+          updateStatus('Connection Slow / Retrying...', true);
+          showToast('Connecting is taking longer than expected. Ensure host browser tab is active.', 'warning');
+        }
+      }, 10000);
+
+      hostConnection.on('open', () => {
+        clearTimeout(connectionTimeoutTimer);
+        updateStatus('Connected to Host', false);
+        showToast('Connected to Host successfully!', 'success');
+        document.getElementById('shareUrlInput').value = window.location.href;
+      });
+
+      hostConnection.on('data', (data) => {
+        handleIncomingMessage(data, hostConnection);
+      });
+
+      hostConnection.on('close', () => {
+        clearTimeout(connectionTimeoutTimer);
+        updateStatus('Host Disconnected', false);
+        showToast('Host ended the session or closed their browser', 'error');
+      });
+
+      hostConnection.on('error', (err) => {
+        clearTimeout(connectionTimeoutTimer);
+        console.warn('Host connection error:', err);
+        showToast('Connection to host failed. Check firewall / network.', 'error');
+        updateStatus('Connection Failed', false);
+      });
+    }
+
+    function handleIncomingMessage(msg, conn) {
+      if (!msg || !msg.type) return;
+
+      switch (msg.type) {
+        case 'manifest':
+          if (!isHost) {
+            updateManifestFromHost(msg.files);
+          }
+          break;
+
+        case 'request-file':
+          if (isHost && localFiles.has(msg.fileId)) {
+            streamFileToPeer(msg.fileId, conn);
+          }
+          break;
+
+        case 'file-header':
+          prepareIncomingFileTransfer(msg);
+          break;
+
+        case 'file-chunk':
+          processIncomingChunk(msg);
+          break;
+
+        case 'file-complete':
+          finalizeIncomingFile(msg.fileId);
+          break;
+      }
+    }
+
+    function broadcastManifest(targetConn = null) {
+      const manifestList = Array.from(localFiles.values()).map(item => ({
+        id: item.id,
+        path: item.path,
+        size: item.size,
+        type: item.type,
+        category: item.category
+      }));
+
+      const payload = {
+        type: 'manifest',
+        files: manifestList
+      };
+
+      if (targetConn) {
+        targetConn.send(payload);
+      } else {
+        activeConnections.forEach(conn => {
+          if (conn.open) conn.send(payload);
+        });
+      }
+    }
+
+    function updateManifestFromHost(files) {
+      files.forEach(item => {
+        if (!localFiles.has(item.id)) {
+          localFiles.set(item.id, {
+            ...item,
+            file: null,
+            blob: null,
+            status: 'remote'
+          });
+        }
+      });
+      renderFileList();
+    }
+
+    function setupDragAndDrop() {
+      const dropzone = document.getElementById('dropzoneContainer');
+      if (!dropzone) return;
+
+      ['dragenter', 'dragover'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.add('dropzone-active');
+        }, false);
+      });
+
+      ['dragleave', 'drop'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.remove('dropzone-active');
+        }, false);
+      });
+
+      dropzone.addEventListener('drop', async (e) => {
+        const items = e.dataTransfer.items;
+        if (items && items.length > 0) {
+          showToast('Processing dropped files/folders...', 'info');
+          const fileEntries = await scanDataTransferItems(items);
+          addFilesToState(fileEntries);
+        }
+      });
+    }
+
+    async function scanDataTransferItems(dataTransferItems) {
+      const fileList = [];
+      const entryPromises = [];
+
+      for (let i = 0; i < dataTransferItems.length; i++) {
+        const item = dataTransferItems[i];
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+          if (entry) {
+            entryPromises.push(readEntryRecursively(entry, '', fileList));
+          } else {
+            const file = item.getAsFile();
+            if (file) fileList.push({ file, path: file.name });
+          }
+        }
+      }
+
+      await Promise.all(entryPromises);
+      return fileList;
+    }
+
+    function readEntryRecursively(entry, pathSoFar, resultList) {
+      return new Promise((resolve) => {
+        if (entry.isFile) {
+          entry.file((file) => {
+            const relativePath = pathSoFar ? `${pathSoFar}/${file.name}` : file.name;
+            resultList.push({ file, path: relativePath });
+            resolve();
+          }, () => resolve());
+        } else if (entry.isDirectory) {
+          const dirReader = entry.createReader();
+          const readAll = () => {
+            dirReader.readEntries(async (entries) => {
+              if (!entries || entries.length === 0) {
+                resolve();
+              } else {
+                const newPath = pathSoFar ? `${pathSoFar}/${entry.name}` : entry.name;
+                for (const child of entries) {
+                  await readEntryRecursively(child, newPath, resultList);
+                }
+                readAll();
+              }
+            }, () => resolve());
+          };
+          readAll();
+        } else {
+          resolve();
+        }
+      });
+    }
+
+    function handleFileSelect(e) {
+      const files = Array.from(e.target.files);
+      if (files.length === 0) return;
+      const fileEntries = files.map(file => ({ file, path: file.name }));
+      addFilesToState(fileEntries);
+      e.target.value = '';
+    }
+
+    function handleFolderSelect(e) {
+      const files = Array.from(e.target.files);
+      if (files.length === 0) return;
+      const fileEntries = files.map(file => ({
+        file,
+        path: file.webkitRelativePath || file.name
+      }));
+      addFilesToState(fileEntries);
+      e.target.value = '';
+    }
+
+    function addFilesToState(fileEntries) {
+      let addedCount = 0;
+      fileEntries.forEach(({ file, path }) => {
+        const fileId = generateFileId(path, file.size);
+        if (!localFiles.has(fileId)) {
+          const category = detectCategory(file.name, file.type);
+          localFiles.set(fileId, {
+            id: fileId,
+            file: file,
+            path: path,
+            size: file.size,
+            type: file.type || 'application/octet-stream',
+            category: category,
+            blob: null,
+            status: 'ready'
+          });
+          addedCount++;
+        }
+      });
+
+      if (addedCount > 0) {
+        showToast(`Added ${addedCount} file(s) to manifest`, 'success');
+        renderFileList();
+        if (isHost) broadcastManifest();
+      }
+    }
+
+    function detectCategory(filename, mimeType) {
+      const ext = filename.split('.').pop().toLowerCase();
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext) || mimeType.startsWith('image/')) return 'image';
+      if (['mp4', 'webm', 'mkv', 'avi', 'mov'].includes(ext) || mimeType.startsWith('video/')) return 'video';
+      if (['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext) || mimeType.startsWith('audio/')) return 'audio';
+      if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt'].includes(ext) || mimeType.includes('pdf')) return 'document';
+      if (['js', 'ts', 'jsx', 'tsx', 'html', 'css', 'json', 'py', 'java', 'c', 'cpp', 'rs', 'go', 'php', 'md', 'xml'].includes(ext)) return 'code';
+      if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
+      return 'other';
+    }
+
+    async function streamFileToPeer(fileId, conn) {
+      const fileData = localFiles.get(fileId);
+      if (!fileData || !fileData.file) return;
+
+      const file = fileData.file;
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+      showProgressBar(true, `Sending ${file.name}`);
+
+      conn.send({
+        type: 'file-header',
+        fileId: fileId,
+        path: fileData.path,
+        size: file.size,
+        mimeType: fileData.type,
+        totalChunks: totalChunks
+      });
+
+      let offset = 0;
+      let chunkIndex = 0;
+      const startTime = Date.now();
+
+      while (offset < file.size) {
+        const dc = conn.dataChannel || conn._dc;
+        if (dc) {
+          while (dc.bufferedAmount > 64 * 1024) {
+            await new Promise(r => setTimeout(r, 20));
+          }
+        }
+
+        const slice = file.slice(offset, offset + CHUNK_SIZE);
+        const buffer = await slice.arrayBuffer();
+
+        if (!conn.open) {
+          showToast('Transfer interrupted: connection closed', 'error');
+          showProgressBar(false);
+          return;
+        }
+
+        conn.send({
+          type: 'file-chunk',
+          fileId: fileId,
+          chunkIndex: chunkIndex,
+          data: buffer
+        });
+
+        offset += CHUNK_SIZE;
+        chunkIndex++;
+
+        const percent = Math.min(100, Math.round((offset / file.size) * 100));
+        const elapsedSec = (Date.now() - startTime) / 1000;
+        const speedMBps = elapsedSec > 0 ? ((offset / (1024 * 1024)) / elapsedSec).toFixed(2) : 0;
+
+        updateProgressBar(percent, `${speedMBps} MB/s`);
+
+        if (chunkIndex % 15 === 0) {
+          await new Promise(r => setTimeout(r, 10));
+        }
+      }
+
+      conn.send({
+        type: 'file-complete',
+        fileId: fileId
+      });
+
+      setTimeout(() => showProgressBar(false), 800);
+      showToast(`Sent ${fileData.path} successfully!`, 'success');
+    }
+
+    function prepareIncomingFileTransfer(header) {
+      const existing = localFiles.get(header.fileId) || {};
+      localFiles.set(header.fileId, {
+        ...existing,
+        id: header.fileId,
+        path: header.path,
+        size: header.size,
+        type: header.mimeType,
+        totalChunks: header.totalChunks,
+        receivedChunks: new Array(header.totalChunks),
+        receivedCount: 0,
+        status: 'downloading'
+      });
+
+      showProgressBar(true, `Receiving ${header.path}`);
+      renderFileList();
+    }
+
+    function processIncomingChunk(msg) {
+      const fileData = localFiles.get(msg.fileId);
+      if (!fileData) return;
+
+      fileData.receivedChunks[msg.chunkIndex] = msg.data;
+      fileData.receivedCount = (fileData.receivedCount || 0) + 1;
+
+      const percent = Math.round((fileData.receivedCount / fileData.totalChunks) * 100);
+      updateProgressBar(percent, 'Receiving...');
+    }
+
+    function finalizeIncomingFile(fileId) {
+      const fileData = localFiles.get(fileId);
+      if (!fileData) return;
+
+      const blob = new Blob(fileData.receivedChunks, { type: fileData.type });
+      fileData.blob = blob;
+      fileData.status = 'ready';
+      fileData.receivedChunks = null;
+
+      showProgressBar(false);
+      showToast(`Finished downloading ${fileData.path}`, 'success');
+      renderFileList();
+
+      if (fileData.onCompleteAction) {
+        fileData.onCompleteAction();
+        fileData.onCompleteAction = null;
+      }
+    }
+
+    function requestFileDownload(fileId) {
+      const item = localFiles.get(fileId);
+      if (!item) return;
+
+      if (item.blob || item.file) {
+        saveBlobToDisk(item.blob || item.file, item.path.split('/').pop());
+        return;
+      }
+
+      if (!hostConnection || !hostConnection.open) {
+        showToast('Connection to host lost', 'error');
+        return;
+      }
+
+      item.status = 'downloading';
+      renderFileList();
+
+      item.onCompleteAction = () => {
+        saveBlobToDisk(item.blob, item.path.split('/').pop());
+      };
+
+      hostConnection.send({
+        type: 'request-file',
+        fileId: fileId
+      });
+    }
+
+    async function downloadAllAsZip() {
+      const items = Array.from(localFiles.values());
+      if (items.length === 0) {
+        showToast('No files available to bundle', 'warning');
+        return;
+      }
+
+      const zip = new JSZip();
+      showProgressBar(true, 'Preparing ZIP archive...');
+
+      let processed = 0;
+      for (const item of items) {
+        let content = item.file || item.blob;
+
+        if (!content && !isHost) {
+          updateProgressBar(Math.round((processed / items.length) * 100), `Fetching ${item.path}...`);
+          await new Promise((resolve) => {
+            item.onCompleteAction = resolve;
+            hostConnection.send({
+              type: 'request-file',
+              fileId: item.id
+            });
+          });
+          content = item.blob;
+        }
+
+        if (content) {
+          zip.file(item.path, content);
+        }
+        processed++;
+        updateProgressBar(Math.round((processed / items.length) * 100), 'Zipping...');
+      }
+
+      updateProgressBar(95, 'Compressing ZIP...');
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      saveBlobToDisk(zipBlob, 'AirSync-Shared-Bundle.zip');
+      showProgressBar(false);
+      showToast('Downloaded ZIP bundle successfully!', 'success');
+    }
+
+    function renderFileList() {
+      const tbody = document.getElementById('fileTableBody');
+      const emptyState = document.getElementById('emptyState');
+      tbody.innerHTML = '';
+
+      const items = Array.from(localFiles.values()).filter(item => {
+        const matchesCategory = currentFilterCategory === 'all' || item.category === currentFilterCategory;
+        const matchesSearch = item.path.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesCategory && matchesSearch;
+      });
+
+      let totalSize = 0;
+      localFiles.forEach(f => totalSize += f.size);
+
+      document.getElementById('fileCountBadge').textContent = `${localFiles.size} Items`;
+      document.getElementById('totalSizeBadge').textContent = formatBytes(totalSize);
+
+      if (items.length === 0) {
+        emptyState.classList.remove('hidden');
+        return;
+      } else {
+        emptyState.classList.add('hidden');
+      }
+
+      items.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-slate-900/60 transition group";
+
+        const categoryBadge = getCategoryBadgeHTML(item.category);
+        const iconHTML = getFileIconHTML(item.category, item.type);
+        const statusHTML = getStatusBadgeHTML(item.status);
+
+        tr.innerHTML = `
+          <td class="py-3 px-4 w-12 text-center text-slate-400 text-sm">
+            ${iconHTML}
+          </td>
+          <td class="py-3 px-4 font-mono text-slate-200 break-all">
+            <div class="font-bold text-xs">${escapeHtml(item.path)}</div>
+          </td>
+          <td class="py-3 px-4 font-mono text-slate-400 text-xs whitespace-nowrap">
+            ${formatBytes(item.size)}
+          </td>
+          <td class="py-3 px-4 whitespace-nowrap">
+            ${categoryBadge}
+          </td>
+          <td class="py-3 px-4 text-center whitespace-nowrap">
+            ${statusHTML}
+          </td>
+          <td class="py-3 px-4 text-right whitespace-nowrap">
+            <div class="flex items-center justify-end gap-1">
+              <button onclick="previewFile('${item.id}')" title="Live Preview" class="p-1.5 rounded-lg bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-400 transition">
+                <i class="fa-solid fa-eye text-xs"></i>
+              </button>
+              <button onclick="copyFileContent('${item.id}')" title="Copy Content / Data to Clipboard" class="p-1.5 rounded-lg bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-400 transition">
+                <i class="fa-regular fa-copy text-xs"></i>
+              </button>
+              <button onclick="requestFileDownload('${item.id}')" title="Save File to System" class="p-1.5 rounded-lg bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-400 transition">
+                <i class="fa-solid fa-download text-xs"></i>
+              </button>
+              ${isHost ? `
+                <button onclick="removeFile('${item.id}')" title="Remove File" class="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition">
+                  <i class="fa-solid fa-xmark text-xs"></i>
+                </button>
+              ` : ''}
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function previewFile(fileId) {
+      const item = localFiles.get(fileId);
+      if (!item) return;
+
+      const modal = document.getElementById('previewModal');
+      const body = document.getElementById('previewBody');
+      const title = document.getElementById('previewTitle');
+      const sub = document.getElementById('previewSub');
+      const downloadBtn = document.getElementById('previewDownloadBtn');
+
+      title.textContent = item.path;
+      sub.textContent = `Size: ${formatBytes(item.size)} | Type: ${item.type}`;
+      body.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin text-cyan-400 text-3xl"></i>';
+
+      modal.classList.remove('hidden');
+
+      let content = item.file || item.blob;
+
+      if (!content && !isHost) {
+        showToast('Streaming file for preview...', 'info');
+        await new Promise((resolve) => {
+          item.onCompleteAction = resolve;
+          hostConnection.send({
+            type: 'request-file',
+            fileId: item.id
+          });
+        });
+        content = item.blob;
+      }
+
+      if (!content) {
+        body.innerHTML = '<p class="text-rose-400 text-xs">Failed to load preview data.</p>';
+        return;
+      }
+
+      const url = URL.createObjectURL(content);
+      downloadBtn.href = url;
+      downloadBtn.download = item.path.split('/').pop();
+
+      const previewCopyBtn = document.getElementById('previewCopyBtn');
+      if (previewCopyBtn) {
+        previewCopyBtn.onclick = () => copyFileContent(item.id);
+      }
+
+      if (item.category === 'image') {
+        body.innerHTML = `<img src="${url}" class="max-h-[60vh] max-w-full rounded-lg object-contain border border-slate-800 shadow-lg">`;
+      } else if (item.category === 'video') {
+        body.innerHTML = `<video src="${url}" controls class="max-h-[60vh] max-w-full rounded-lg border border-slate-800 shadow-lg"></video>`;
+      } else if (item.category === 'audio') {
+        body.innerHTML = `<div class="p-6 text-center space-y-4 w-full max-w-md"><i class="fa-solid fa-file-audio text-5xl text-pink-400"></i><audio src="${url}" controls class="w-full"></audio></div>`;
+      } else if (item.category === 'code' || item.category === 'document' || item.type.includes('text') || item.type.includes('json') || item.type.includes('xml')) {
+        try {
+          const text = await content.text();
+          body.innerHTML = `<pre class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-slate-300 font-mono text-xs overflow-auto max-h-[60vh] w-full whitespace-pre-wrap leading-relaxed select-all">${escapeHtml(text.slice(0, 100000))}${text.length > 100000 ? '\n... [Preview truncated]' : ''}</pre>`;
+        } catch (e) {
+          body.innerHTML = `<div class="text-center p-6 space-y-2"><i class="fa-solid fa-file-lines text-4xl text-slate-500"></i><p class="text-xs text-slate-400">Binary file cannot be previewed directly as text.</p></div>`;
+        }
+      } else {
+        body.innerHTML = `<div class="text-center p-6 space-y-3"><i class="fa-solid fa-file-circle-check text-5xl text-cyan-400"></i><p class="text-sm font-semibold text-white">${escapeHtml(item.path.split('/').pop())}</p><p class="text-xs text-slate-400">Direct streaming preview not available for this format. Use Copy or Save.</p></div>`;
+      }
+    }
+
+    function closePreviewModal() {
+      document.getElementById('previewModal').classList.add('hidden');
+    }
+
+    function setCategoryFilter(cat, evt) {
+      currentFilterCategory = cat;
+      document.querySelectorAll('.cat-btn').forEach(btn => {
+        btn.classList.remove('active', 'bg-cyan-500/10', 'text-cyan-400', 'border-cyan-500/30');
+        btn.classList.add('bg-slate-800/60', 'text-slate-400', 'border-slate-800');
+      });
+      if (evt && evt.currentTarget) {
+        evt.currentTarget.classList.add('active', 'bg-cyan-500/10', 'text-cyan-400', 'border-cyan-500/30');
+        evt.currentTarget.classList.remove('bg-slate-800/60', 'text-slate-400', 'border-slate-800');
+      }
+      renderFileList();
+    }
+
+    function filterFiles() {
+      searchQuery = document.getElementById('searchInput').value;
+      renderFileList();
+    }
+
+    function clearFileList() {
+      localFiles.clear();
+      renderFileList();
+      if (isHost) broadcastManifest();
+      showToast('Cleared manifest', 'info');
+    }
+
+    function removeFile(fileId) {
+      localFiles.delete(fileId);
+      renderFileList();
+      if (isHost) broadcastManifest();
+      showToast('File removed', 'info');
+    }
+
+    function createNewRoom() {
+      window.location.hash = '';
+      window.location.reload();
+    }
+
+    function copyShareLink() {
+      const input = document.getElementById('shareUrlInput');
+      copyToClipboardText(input.value);
+      showToast('Share link copied to clipboard!', 'success');
+    }
+
+    function openQrModal() {
+      const url = document.getElementById('shareUrlInput').value;
+      if (!url || url.includes('Generating')) return;
+      document.getElementById('qrImage').src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`;
+      document.getElementById('qrModal').classList.remove('hidden');
+    }
+
+    function closeQrModal() {
+      document.getElementById('qrModal').classList.add('hidden');
+    }
+
+    async function saveBlobToDisk(blob, filename) {
+      if (window.showSaveFilePicker) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: filename
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          showToast(`Saved ${filename} directly to system location!`, 'success');
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+          console.warn('File System API fallback:', err);
+        }
+      }
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast(`Saved ${filename} to system Downloads folder`, 'success');
+    }
+
+    async function copyFileContent(fileId) {
+      const item = localFiles.get(fileId);
+      if (!item) return;
+
+      let content = item.file || item.blob;
+
+      if (!content && !isHost) {
+        showToast('Streaming file data to copy...', 'info');
+        await new Promise((resolve) => {
+          item.onCompleteAction = resolve;
+          hostConnection.send({
+            type: 'request-file',
+            fileId: item.id
+          });
+        });
+        content = item.blob;
+      }
+
+      if (!content) {
+        showToast('Failed to fetch file content', 'error');
+        return;
+      }
+
+      try {
+        if (item.category === 'code' || item.type.includes('text') || item.type.includes('json') || item.type.includes('xml') || item.type.includes('svg')) {
+          const text = await content.text();
+          copyToClipboardText(text);
+          showToast(`Copied text content of ${item.path.split('/').pop()} to clipboard!`, 'success');
+        } else if (item.category === 'image' && window.ClipboardItem) {
+          try {
+            const itemToCopy = new ClipboardItem({ [content.type || 'image/png']: content });
+            await navigator.clipboard.write([itemToCopy]);
+            showToast(`Copied image ${item.path.split('/').pop()} to clipboard!`, 'success');
+          } catch (imgErr) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              copyToClipboardText(e.target.result);
+              showToast(`Copied Data URL for ${item.path.split('/').pop()} to clipboard!`, 'success');
+            };
+            reader.readAsDataURL(content);
+          }
+        } else {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            copyToClipboardText(e.target.result);
+            showToast(`Copied Data URL for ${item.path.split('/').pop()} to clipboard!`, 'success');
+          };
+          reader.readAsDataURL(content);
+        }
+      } catch (err) {
+        console.error('Copy error:', err);
+        showToast('Unable to copy file content', 'error');
+      }
+    }
+
+    function copyToClipboardText(str) {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(str);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = str;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+      }
+    }
+
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      
+      let borderClass = 'border-cyan-500/40 text-cyan-200';
+      let icon = 'fa-circle-info text-cyan-400';
+
+      if (type === 'success') {
+        borderClass = 'border-emerald-500/40 text-emerald-200';
+        icon = 'fa-circle-check text-emerald-400';
+      } else if (type === 'warning') {
+        borderClass = 'border-amber-500/40 text-amber-200';
+        icon = 'fa-triangle-exclamation text-amber-400';
+      } else if (type === 'error') {
+        borderClass = 'border-rose-500/40 text-rose-200';
+        icon = 'fa-circle-xmark text-rose-400';
+      }
+
+      toast.className = `glass-card pointer-events-auto px-4 py-3 rounded-xl border ${borderClass} text-xs font-semibold shadow-xl flex items-center gap-2 transition-all duration-300 transform translate-y-2 opacity-0`;
+      toast.innerHTML = `<i class="fa-solid ${icon}"></i><span>${escapeHtml(message)}</span>`;
+
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      }, 10);
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    function showProgressBar(show, titleText = '') {
+      const bar = document.getElementById('transferProgressBar');
+      if (show) {
+        bar.classList.remove('hidden');
+        if (titleText) document.getElementById('transferFileName').textContent = titleText;
+      } else {
+        bar.classList.add('hidden');
+      }
+    }
+
+    function updateProgressBar(percent, speedText) {
+      document.getElementById('progressBarFill').style.width = `${percent}%`;
+      document.getElementById('transferPercent').textContent = `${percent}%`;
+      if (speedText) document.getElementById('transferSpeed').textContent = speedText;
+    }
+
+    function updateRoleUI(text, dotColorClass) {
+      document.getElementById('roleText').textContent = text;
+      const dot = document.getElementById('roleDot');
+      dot.className = `w-2 h-2 rounded-full ${dotColorClass}`;
+      document.getElementById('roleBadge').classList.remove('hidden');
+    }
+
+    function updateStatus(text, loading) {
+      document.getElementById('statusText').textContent = text;
+      const spinner = document.getElementById('statusSpinner');
+      if (loading) {
+        spinner.className = "fa-solid fa-circle-notch fa-spin text-cyan-400";
+        spinner.classList.remove('hidden');
+      } else {
+        spinner.className = "fa-solid fa-circle-check text-emerald-400";
+      }
+    }
+
+    function updatePeerCountUI() {
+      const badge = document.getElementById('peerCountBadge');
+      if (badge) {
+        badge.textContent = `${activeConnections.length} Peer${activeConnections.length === 1 ? '' : 's'} Connected`;
+      }
+    }
+
+    function getFileIconHTML(category, mime) {
+      switch (category) {
+        case 'image': return '<i class="fa-solid fa-file-image text-cyan-400"></i>';
+        case 'video': return '<i class="fa-solid fa-file-video text-purple-400"></i>';
+        case 'audio': return '<i class="fa-solid fa-file-audio text-pink-400"></i>';
+        case 'document': return '<i class="fa-solid fa-file-pdf text-rose-400"></i>';
+        case 'code': return '<i class="fa-solid fa-file-code text-emerald-400"></i>';
+        case 'archive': return '<i class="fa-solid fa-file-zipper text-amber-400"></i>';
+        default: return '<i class="fa-solid fa-file text-slate-400"></i>';
+      }
+    }
+
+    function getCategoryBadgeHTML(category) {
+      return `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">${category}</span>`;
+    }
+
+    function getStatusBadgeHTML(status) {
+      if (status === 'ready') {
+        return '<span class="text-emerald-400 font-bold text-[10px]"><i class="fa-solid fa-circle-check"></i> Ready</span>';
+      } else if (status === 'downloading') {
+        return '<span class="text-cyan-400 font-bold text-[10px]"><i class="fa-solid fa-spinner fa-spin"></i> Streaming...</span>';
+      } else {
+        return '<span class="text-slate-500 font-bold text-[10px]"><i class="fa-solid fa-cloud"></i> Remote</span>';
+      }
+    }
+
+    function generateFileId(path, size) {
+      return `${path.replace(/[^a-zA-Z0-9]/g, '_')}_${size}`;
+    }
+
+    function formatBytes(bytes, decimals = 2) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const dm = decimals < 0 ? 0 : decimals;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+  </script>
+</body>
+</html>
